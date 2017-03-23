@@ -7,7 +7,7 @@ import javax.swing.*;
 public class FileServer {
 
     public static void main(String[] args) {
-        NetObject client = new NetObject("File Server");
+        NetObject server = new NetObject("File Server");
 
 
     }

@@ -18,27 +18,25 @@ class Message {
 }
 
 public class NetObject {
-	int mType;
-	boolean mUDP;
-	int mPort;
-	String mIP;
-	String filePath;
+	private String filePath;
 
 	//Swing stuff
 	private JTextArea txtMessages = null;
 	private JScrollPane scrollPane = null;
 
 	//packet size in bytes
-	static final int PACKET_SIZE = 1024;
+	private static final int PACKET_SIZE = 1024;
 
 	//message types
-	static final byte MSG_INIT = 0;	//init connection
-	static final byte MSG_TEXT = 1;	//sending text
-	static final byte MSG_FILE = 2;	//sending file
+	private static final byte MSG_INIT = 0;	//init connection
+	private static final byte MSG_TEXT = 1;	//sending text
+	private static final byte MSG_FILE = 2;	//sending file
 
 	NetObject(String strTitle) {
+		//get relative path
 		filePath = new File("").getAbsolutePath();
 
+		//create window
 		JFrame frame = new JFrame(strTitle);
 		frame.setSize(600, 400);
 		frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
@@ -52,6 +50,41 @@ public class NetObject {
 		frame.add(scrollPane);
 
 		frame.setVisible(true);
+	}
+
+	//receiving data
+	public boolean listen(final int port) {
+		Thread thrListen = new Thread(new Runnable() {
+			@Override
+			public void run() {
+
+			}
+		});
+		thrListen.start();
+
+		//process packets
+		Thread thrProcess = new Thread(new Runnable() {
+			@Override
+			public void run() {
+
+			}
+		});
+		thrProcess.start();
+
+		return true;
+	}
+
+	//sending data
+	public boolean connect(String IP, final int port) {
+		Thread thrConnect = new Thread(new Runnable() {
+			@Override
+			public void run() {
+
+			}
+		});
+		thrConnect.start();
+
+		return true;
 	}
 
 	private void processUDPData(DatagramPacket packet, Message msg) {
