@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit;
 import static javax.swing.JFileChooser.APPROVE_OPTION;
 
 class Message {
-	byte mType = 0;
 	byte[] mData;
 	InetAddress mIP;
 	int mPort;
@@ -32,8 +31,14 @@ public class NetObject {
 	private JTextArea txtMessages = null;
 	private JScrollPane scrollPane = null;
 
-	//packet size in bytes
+	//packet size/subsizes in bytes
 	private static final int PACKET_SIZE = 1024;
+	private static final int PKT_IP_SIZE = 4;
+	private static final int PKT_PORT_SIZE = 4;
+	private static final int PKT_SQUN_SIZE = 8;
+	private static final int PKT_FILENUM_SIZE = 4;
+	private static final int PKT_FILEDAT_SIZE = PACKET_SIZE
+			- PKT_IP_SIZE - PKT_PORT_SIZE - PKT_SQUN_SIZE - PKT_FILENUM_SIZE;
 
 	//message types
 	private static final byte MSG_INIT = 0;	//init connection
@@ -106,24 +111,10 @@ public class NetObject {
 							//process packet into the message
 							processUDPData(receivePacket, msg);
 
-							switch (msg.mType) {
-								case MSG_INIT:
-									String strInitial = new String(msg.mData);
-									msg.mData = ("Message received, " +
-											strInitial.substring(strInitial.lastIndexOf(' ') + 1)).getBytes();
-									sendUDPData(listenSocket, msg);
-									break;
-								case MSG_TEXT:
-									String recMsg = new String(msg.mData);
-									msg.mData = recMsg.toUpperCase().getBytes();
-									sendUDPData(listenSocket, msg);
-									break;
-								case MSG_FILE:
-									String filename = new String(msg.mData);
-									//sendFile(listenSocket, msg, filename);
-									System.out.println("Sent: " + filename);
-									break;
-							}
+							String filename = new String(msg.mData);
+							//sendFile(listenSocket, msg, filename);
+							System.out.println("Sent: " + filename);
+							break;
 						}
 					} catch (Exception ex) {
 						ex.printStackTrace();
@@ -173,9 +164,6 @@ public class NetObject {
 		ByteBuffer bufSize = ByteBuffer.wrap(Arrays.copyOfRange(msg.mData, 0, byteSize.length));
 		int dataSize = bufSize.getInt();
 
-		//get type of receiving data
-		msg.mType = msg.mData[byteSize.length];
-
 		//get sent data from packet
 		msg.mData = Arrays.copyOfRange(msg.mData, byteSize.length + 1, byteSize.length + 1 + dataSize);
 
@@ -184,7 +172,7 @@ public class NetObject {
 		msg.mIP = packet.getAddress();
 	}
 
-	public void receiveUDPData(DatagramSocket socket, Message msg) throws Exception{
+	private void receiveUDPData(DatagramSocket socket, Message msg) throws Exception{
 		msg.mData = new byte[PACKET_SIZE];
 		DatagramPacket receivePacket = new DatagramPacket(msg.mData, msg.mData.length);
 		socket.receive(receivePacket);
@@ -192,7 +180,7 @@ public class NetObject {
 		processUDPData(receivePacket, msg);
 	}
 
-	public void sendUDPData(DatagramSocket socket, Message msg) throws Exception{
+	private void sendUDPData(DatagramSocket socket, Message msg) throws Exception{
 		//get size of data
 		ByteBuffer b = ByteBuffer.allocate(4);
 		b.putInt(msg.mData.length);
@@ -201,7 +189,6 @@ public class NetObject {
 		//create array of all data
 		byte[] data = new byte[dataSize.length + 1 + msg.mData.length];
 		System.arraycopy(dataSize, 0, data, 0, dataSize.length);
-		data[dataSize.length] = msg.mType;
 		System.arraycopy(msg.mData, 0, data, dataSize.length + 1, msg.mData.length);
 
 		//send data
@@ -220,27 +207,24 @@ public class NetObject {
 				@Override
 				public void run() {
 					try {
-						Message msg = new Message();
-						msg.mIP = InetAddress.getByName(IP);
-						msg.mPort = port;
-						msg.mType = MSG_FILE;
-
-						byte[] fileData = Files.readAllBytes(file);
-
 						BlockingQueue<Message> queue = new LinkedBlockingQueue<>();
 						mtxArray.acquire();
-						int index = arrReceived.size();
+						int fileIndex = arrReceived.size();
 						arrReceived.add(queue);
 						mtxArray.release();
 
-						DatagramSocket sock = new DatagramSocket();
+						//file info
+						byte[] fileData = Files.readAllBytes(file);
+						String fileName = file.getFileName().toString();
 
-						//send file start packet
-
-
-						msg.mData = fileData;
-
+						//send initial file packet
+						Message msg = new Message();
+						msg.mIP = InetAddress.getByName(IP);
+						msg.mPort = port;
+						msg.mData = wrapFileInfo(fileName, fileData.length);
 						qMessages.put(msg);
+
+
 					}
 					catch (Exception ex) {
 						ex.printStackTrace();
@@ -249,6 +233,22 @@ public class NetObject {
 			});
 			thrSend.start();
 		}
+	}
+
+	private byte[] wrapFileInfo(String filename, int filesize) {
+		int fnSize = 260;
+		int fdSize = 8;
+		byte[] wrappedData = new byte[fnSize + fdSize];
+
+		ByteBuffer bbData = ByteBuffer.allocate(fdSize);
+		bbData.putInt(filesize);
+		byte[] dataSize = bbData.array();
+
+		//add filename and filesize to data
+		System.arraycopy(filename.getBytes(), 0, wrappedData, 0, fnSize);
+		System.arraycopy(dataSize, 0, wrappedData, fnSize, fdSize);
+
+		return wrappedData;
 	}
 
 	public void receiveFile(Object socket, Message msg, String filename) {
