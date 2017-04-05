@@ -3,17 +3,10 @@
  */
 
 import javax.swing.*;
-import javax.swing.text.DefaultCaret;
-import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
-import java.io.File;
-import java.io.FileInputStream;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -53,7 +46,7 @@ public class FileClient extends NetObject {
                         byte[] fileData = Files.readAllBytes(file);
                         String fileName = file.getFileName().toString();
 
-                        writeMessage("Sending File: " + fileName);
+                        writeMessage("Sending File " + fileIndex + ": " + fileName);
 
                         //send initial file packet
                         Message msg = new Message();
@@ -70,10 +63,14 @@ public class FileClient extends NetObject {
                         for (int i = 0; i < numWindows; i = windowPos) {
                             for (int j = indexPos; j < WINDOW_SIZE; j++) {
                                 int loc = i * WINDOW_SIZE + j;
+                                int size = Math.min(fileData.length - loc * PKT_FILEDAT_SIZE, PKT_FILEDAT_SIZE);
 
                                 Message msgPart = new Message(msg);
-                                msgPart.mData = wrapFileData(fileData, fileIndex, loc);
+                                msgPart.mData = wrapFileData(fileData, fileIndex, loc, size);
+                                writeMessage("Sending File " + fileIndex + " - Part " + loc);
                                 qMessages.put(msgPart);
+
+                                if (size < PKT_FILEDAT_SIZE) j = PKT_FILEDAT_SIZE;
                             }
 
                             long pollTime = 500;
@@ -93,7 +90,7 @@ public class FileClient extends NetObject {
                                             }
                                         }
                                         else {
-                                            int sequence = getPacketSequence(msgReceive.mData);
+                                            int sequence = msgReceive.mSqun + 1;
                                             if (sequence > maxSequence) maxSequence = sequence;
                                             if (maxSequence >= i * WINDOW_SIZE + WINDOW_SIZE - 1) {
                                                 windowPos++;
@@ -101,7 +98,7 @@ public class FileClient extends NetObject {
                                                 arrReceived.get(fileIndex).clear();
                                                 break;
                                             } else {
-                                                indexPos = maxSequence;
+                                                indexPos = maxSequence + 1;
                                             }
                                         }
                                     }
@@ -110,6 +107,8 @@ public class FileClient extends NetObject {
                                 }
                             }
                         }
+
+                        writeMessage("File " + fileIndex + " completed: " + fileName);
                     }
                     catch (Exception ex) {
                         ex.printStackTrace();
@@ -121,22 +120,28 @@ public class FileClient extends NetObject {
     }
 
     private byte[] wrapFileInfo(String filename, int filesize) {
-        int fnSize = 260;
-        int fdSize = 8;
-        byte[] wrappedData = new byte[fnSize + fdSize];
+        int fnSize = 8;     //length of the filename
+        int fdSize = 8;     //length of file data
+        byte[] wrappedData = new byte[PKT_TYPE_SIZE + fdSize + fnSize + filename.length()];
 
         ByteBuffer bbData = ByteBuffer.allocate(fdSize);
         bbData.putInt(filesize);
         byte[] dataSize = bbData.array();
 
-        //add filename and filesize to data
-        System.arraycopy(filename.getBytes(), 0, wrappedData, 0, filename.length());
-        System.arraycopy(dataSize, 0, wrappedData, fnSize, fdSize);
+        ByteBuffer bbFile = ByteBuffer.allocate(fdSize);
+        bbFile.putInt(filename.length());
+        byte[] dataFile = bbData.array();
+
+        //add type, filesize, filename length, and filename to array
+        wrappedData[0] = MSG_INIT;
+        System.arraycopy(dataSize, 0, wrappedData, PKT_TYPE_SIZE, fdSize);
+        System.arraycopy(dataFile, 0, wrappedData, PKT_TYPE_SIZE + fdSize, fnSize);
+        System.arraycopy(filename.getBytes(), 0, wrappedData, PKT_TYPE_SIZE + fdSize + fnSize, filename.length());
 
         return wrappedData;
     }
 
-    private byte[] wrapFileData(byte[] data, int fileNum, int sequenceNum) {
+    private byte[] wrapFileData(byte[] data, int fileNum, int sequenceNum, int dataLength) {
         byte[] wrappedData = new byte[PKT_FILENUM_SIZE + PKT_SQUN_SIZE + PKT_FILEDAT_SIZE];
 
         ByteBuffer bbFile = ByteBuffer.allocate(PKT_FILENUM_SIZE);
@@ -145,18 +150,12 @@ public class FileClient extends NetObject {
         ByteBuffer bbSqun = ByteBuffer.allocate(PKT_SQUN_SIZE);
         bbSqun.putInt(sequenceNum);
 
-        System.arraycopy(bbFile.array(), 0, wrappedData, 0, PKT_FILENUM_SIZE);
-        System.arraycopy(bbSqun.array(), 0, wrappedData, PKT_FILENUM_SIZE, PKT_SQUN_SIZE);
-        System.arraycopy(data, sequenceNum, wrappedData, PKT_FILENUM_SIZE + PKT_SQUN_SIZE, PKT_FILEDAT_SIZE);
+        int dataGroup = sequenceNum * PKT_FILEDAT_SIZE;
+        wrappedData[0] = MSG_DATA;
+        System.arraycopy(bbFile.array(), 0, wrappedData, PKT_TYPE_SIZE, PKT_FILENUM_SIZE);
+        System.arraycopy(bbSqun.array(), 0, wrappedData, PKT_TYPE_SIZE + PKT_FILENUM_SIZE, PKT_SQUN_SIZE);
+        System.arraycopy(data, dataGroup, wrappedData, PKT_TYPE_SIZE + PKT_FILENUM_SIZE + PKT_SQUN_SIZE, dataLength);
 
         return wrappedData;
-    }
-
-    private int getPacketSequence(byte[] data) {
-        ByteBuffer bbSqun = ByteBuffer.allocate(PKT_SQUN_SIZE);
-        byte[] sequence = Arrays.copyOfRange(data, PKT_FILENUM_SIZE, PKT_FILENUM_SIZE + PKT_SQUN_SIZE);
-        bbSqun.put(sequence);
-
-        return bbSqun.getInt();
     }
 }

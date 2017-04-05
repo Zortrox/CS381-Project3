@@ -3,13 +3,35 @@
  */
 
 import javax.swing.*;
+import java.net.DatagramSocket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-public class FileServer {
+public class FileServer extends NetObject {
 
     public static void main(String[] args) {
-        NetObject server = new NetObject("File Server");
-
-
+        FileServer server = new FileServer("File Server");
+        server.listen(5000);
+        server.receiveFiles();
     }
 
+    private FileServer(String title) {
+        super(title);
+    }
+
+    private void receiveFiles() {
+
+
+        Path file = Paths.get(filePath + filename);
+
+        try {
+            //receiveUDPData((DatagramSocket) socket, msg);
+
+            Files.write(file, msg.mData);
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 }

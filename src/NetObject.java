@@ -22,39 +22,40 @@ class Message {
 	Message(Message msg) {
 		mIP = msg.mIP;
 		mPort = msg.mPort;
+		mType = msg.mType;
 	}
 
 	byte[] mData;
+	int mFileNum;
+	int mSqun;
+
 	InetAddress mIP;
 	int mPort;
+	byte mType;
 }
 
 public class NetObject {
-	private String filePath;
+	public String filePath;
 
 	//Swing stuff
 	public JFrame frame = null;
-	public JTextArea txtMessages = null;
-	public JScrollPane scrollPane = null;
+	private JTextArea txtMessages = null;
+	private JScrollPane scrollPane = null;
 
 	//packet size/subsizes in bytes
-	public static final int PACKET_SIZE = 1024;
-	public static final int PKT_IP_SIZE = 5;
-	public static final int PKT_PORT_SIZE = 5;
-	public static final int PKT_SQUN_SIZE = 8;
+	private static final int PACKET_SIZE = 1024;
+	public static final int PKT_TYPE_SIZE = 1;
 	public static final int PKT_FILENUM_SIZE = 5;
-	public static final int PKT_FILEDAT_SIZE = PACKET_SIZE
-			- PKT_IP_SIZE - PKT_PORT_SIZE - PKT_SQUN_SIZE - PKT_FILENUM_SIZE;
+	public static final int PKT_SQUN_SIZE = 8;
+	public static final int PKT_FILEDAT_SIZE = PACKET_SIZE - PKT_TYPE_SIZE - PKT_FILENUM_SIZE - PKT_SQUN_SIZE;
 
 	public static final int WINDOW_SIZE = 15;
 
 	//message types
-	private static final byte MSG_INIT = 0;	//init connection
-	private static final byte MSG_TEXT = 1;	//sending text
-	private static final byte MSG_FILE = 2;	//sending file
+	public static final byte MSG_INIT = 0;	//initial file
+	public static final byte MSG_DATA = 1;	//sending data
 
 	//network objects
-	private DatagramSocket listenSocket;
 	private BlockingQueue<DatagramPacket> qPackets = new LinkedBlockingQueue<>();
 	public BlockingQueue<Message> qMessages = new LinkedBlockingQueue<>();
 	public ArrayList<BlockingQueue<Message>> arrReceived = new ArrayList<>();
@@ -86,7 +87,7 @@ public class NetObject {
 	//receiving data
 	public boolean listen(final int port) {
 		try {
-			listenSocket = new DatagramSocket(port);
+			DatagramSocket listenSocket = new DatagramSocket(port);
 
 			Thread thrListen = new Thread(new Runnable() {
 				@Override
@@ -120,7 +121,8 @@ public class NetObject {
 							Message msg = new Message();
 
 							processUDPData(receivePacket, msg);
-							processMessage(msg);
+
+							arrReceived.get(msg.mFileNum).put(msg);
 						}
 					} catch (Exception ex) {
 						ex.printStackTrace();
@@ -140,7 +142,6 @@ public class NetObject {
 	public boolean connect() {
 		try {
 			DatagramSocket sendSocket = new DatagramSocket();
-
 			Thread thrConnect = new Thread(new Runnable() {
 				@Override
 				public void run() {
@@ -153,6 +154,8 @@ public class NetObject {
 				}
 			});
 			thrConnect.start();
+
+			listen(sendSocket.getPort());
 		} catch (Exception e) {
 			e.printStackTrace();
 			return false;
@@ -161,61 +164,42 @@ public class NetObject {
 		return true;
 	}
 
-	//determine what to do with the received packet and data
-	private void processMessage(Message msg) {}
-
 	private void processUDPData(DatagramPacket packet, Message msg) {
 		//store packet data
 		msg.mData = packet.getData();
 
-		//get size of receiving data
-		byte[] byteSize = new byte[4];
-		ByteBuffer bufSize = ByteBuffer.wrap(Arrays.copyOfRange(msg.mData, 0, byteSize.length));
-		int dataSize = bufSize.getInt();
+		int idxFrom = 0;
+		int idxTo = PKT_TYPE_SIZE;
+		msg.mType = getBytes(msg.mData, PKT_TYPE_SIZE, idxFrom, idxTo).get();
+		idxFrom += PKT_TYPE_SIZE;
+
+		idxTo += PKT_FILENUM_SIZE;
+		msg.mFileNum = getBytes(msg.mData, PKT_FILENUM_SIZE, idxFrom, idxTo).getInt();
+		idxFrom += PKT_FILENUM_SIZE;
+
+		idxTo += PKT_SQUN_SIZE;
+		msg.mSqun = getBytes(msg.mData, PKT_SQUN_SIZE, idxFrom, idxTo).getInt();
+		idxFrom += PKT_SQUN_SIZE;
 
 		//get sent data from packet
-		msg.mData = Arrays.copyOfRange(msg.mData, byteSize.length + 1, byteSize.length + 1 + dataSize);
+		msg.mData = Arrays.copyOfRange(msg.mData, idxFrom, msg.mData.length - 1);
 
 		//get location from packet
 		msg.mPort = packet.getPort();
 		msg.mIP = packet.getAddress();
 	}
 
-	private void receiveUDPData(DatagramSocket socket, Message msg) throws Exception{
-		msg.mData = new byte[PACKET_SIZE];
-		DatagramPacket receivePacket = new DatagramPacket(msg.mData, msg.mData.length);
-		socket.receive(receivePacket);
+	private ByteBuffer getBytes(byte[] data, int size, int idxFrom, int idxTo) {
+		ByteBuffer bbData = ByteBuffer.allocate(size);
+		byte[] fileNum = Arrays.copyOfRange(data, idxFrom, idxTo);
+		bbData.put(fileNum);
 
-		processUDPData(receivePacket, msg);
+		return bbData;
 	}
 
 	private void sendUDPData(DatagramSocket socket, Message msg) throws Exception{
-		//get size of data
-		ByteBuffer b = ByteBuffer.allocate(4);
-		b.putInt(msg.mData.length);
-		byte[] dataSize = b.array();
-
-		//create array of all data
-		byte[] data = new byte[dataSize.length + 1 + msg.mData.length];
-		System.arraycopy(dataSize, 0, data, 0, dataSize.length);
-		System.arraycopy(msg.mData, 0, data, dataSize.length + 1, msg.mData.length);
-
-		//send data
-		DatagramPacket sendPacket = new DatagramPacket(data, data.length, msg.mIP, msg.mPort);
+		DatagramPacket sendPacket = new DatagramPacket(msg.mData, msg.mData.length, msg.mIP, msg.mPort);
 		socket.send(sendPacket);
-	}
-
-	public void receiveFile(Object socket, Message msg, String filename) {
-		Path file = Paths.get(filePath + filename);
-
-		try {
-			receiveUDPData((DatagramSocket) socket, msg);
-
-			Files.write(file, msg.mData);
-		}
-		catch (Exception ex) {
-			ex.printStackTrace();
-		}
 	}
 
 	public void writeMessage(String msg) {
@@ -225,7 +209,7 @@ public class NetObject {
 			scrollPane.scrollRectToVisible(txtMessages.getBounds());
 			mtxMessages.release();
 		} catch (Exception e) {
-			//e.printStackTrace();
+			e.printStackTrace();
 		}
 	}
 }
