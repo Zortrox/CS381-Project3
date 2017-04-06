@@ -36,10 +36,9 @@ public class FileClient extends NetObject {
                 @Override
                 public void run() {
                     try {
-                        BlockingQueue<Message> queue = new LinkedBlockingQueue<>();
                         mtxArray.acquire();
                         int fileIndex = arrReceived.size();
-                        arrReceived.add(queue);
+                        arrReceived.add(new LinkedBlockingQueue<>());
                         mtxArray.release();
 
                         //file info
@@ -52,7 +51,7 @@ public class FileClient extends NetObject {
                         Message msg = new Message();
                         msg.mIP = InetAddress.getByName(IP);
                         msg.mPort = port;
-                        msg.mData = wrapFileInfo(fileName, fileData.length);
+                        msg.mData = wrapFileInfo(fileName, fileIndex, fileData.length);
                         qMessages.put(msg);
 
                         int numChunks = (int)Math.ceil(((double)fileData.length) / PKT_FILEDAT_SIZE);
@@ -119,24 +118,38 @@ public class FileClient extends NetObject {
         }
     }
 
-    private byte[] wrapFileInfo(String filename, int filesize) {
-        int fnSize = 8;     //length of the filename
-        int fdSize = 8;     //length of file data
-        byte[] wrappedData = new byte[PKT_TYPE_SIZE + fdSize + fnSize + filename.length()];
+    public void routeMessage(Message msg) {
+        try {
+            arrReceived.get(msg.mFileNum).put(msg);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 
-        ByteBuffer bbData = ByteBuffer.allocate(fdSize);
+    private byte[] wrapFileInfo(String filename, int idxFile, int filesize) {
+        byte[] wrappedData = new byte[PKT_TYPE_SIZE + PKT_FILENUM_SIZE +
+                PKT_FILEDATA_LEN + PKT_FILENAME_LEN + filename.length()];
+
+        ByteBuffer bbIndex = ByteBuffer.allocate(PKT_FILENUM_SIZE);
+        bbIndex.putInt(idxFile);
+        byte[] dataIndex = bbIndex.array();
+
+        ByteBuffer bbData = ByteBuffer.allocate(PKT_FILEDATA_LEN);
         bbData.putInt(filesize);
         byte[] dataSize = bbData.array();
 
-        ByteBuffer bbFile = ByteBuffer.allocate(fdSize);
+        ByteBuffer bbFile = ByteBuffer.allocate(PKT_FILENAME_LEN);
         bbFile.putInt(filename.length());
         byte[] dataFile = bbData.array();
 
-        //add type, filesize, filename length, and filename to array
+        //add type, file number, filesize, filename length, and filename to array
         wrappedData[0] = MSG_INIT;
-        System.arraycopy(dataSize, 0, wrappedData, PKT_TYPE_SIZE, fdSize);
-        System.arraycopy(dataFile, 0, wrappedData, PKT_TYPE_SIZE + fdSize, fnSize);
-        System.arraycopy(filename.getBytes(), 0, wrappedData, PKT_TYPE_SIZE + fdSize + fnSize, filename.length());
+        System.arraycopy(dataIndex, 0, wrappedData, PKT_TYPE_SIZE, PKT_FILENUM_SIZE);
+        System.arraycopy(dataSize, 0, wrappedData, PKT_TYPE_SIZE + PKT_FILEDAT_SIZE, PKT_FILEDATA_LEN);
+        System.arraycopy(dataFile, 0, wrappedData,
+                PKT_TYPE_SIZE + PKT_FILEDAT_SIZE + PKT_FILEDATA_LEN, PKT_FILENAME_LEN);
+        System.arraycopy(filename.getBytes(), 0, wrappedData,
+                PKT_TYPE_SIZE + PKT_FILEDAT_SIZE + PKT_FILEDATA_LEN + PKT_FILENAME_LEN, filename.length());
 
         return wrappedData;
     }
