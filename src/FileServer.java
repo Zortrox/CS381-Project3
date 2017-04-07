@@ -6,10 +6,7 @@ import javax.swing.*;
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.nio.ByteBuffer;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -21,9 +18,12 @@ public class FileServer extends NetObject {
     private Semaphore mtxHash = new Semaphore(1);
     private Map<String, Integer> hashPacket = new HashMap<>();
 
+    private String downloadFolder = "/downloads/";
+
     public static void main(String[] args) {
         FileServer server = new FileServer("File Server");
-        server.listen(5000);
+
+        server.connect(5000);
     }
 
     private FileServer(String title) {
@@ -43,29 +43,54 @@ public class FileServer extends NetObject {
                         writeMessage("File receiving: " + file.getFileName() + " - " + fileSize + " bytes");
 
                         //ack the file
-                        //qMessages.put();
+                        Message msgInfoAck = new Message(initMsg);
+                        msgInfoAck.mData = ackFileInfo(initMsg.mFileNum);
+                        qMessages.put(msgInfoAck);
 
-                        //get sizes
+                        //get number of sequences
+                        byte[] fileData = new byte[fileSize];
                         int numChunks = (int) Math.ceil(((double) fileSize) / PKT_FILEDAT_SIZE);
-                        int numWindows = (int) Math.ceil(((double) numChunks) / WINDOW_SIZE);
+                        int squnPos = 0;    //sequence received *up to*
 
-                        int windowPos = 0;
-                        int indexPos = 0;
-                        for (int i = 0; i < numWindows; i = windowPos) {
-                            for (int j = indexPos; j < WINDOW_SIZE; j++) {
-                                int loc = i * WINDOW_SIZE + j;
-                                int size = Math.min(fileSize - loc * PKT_FILEDAT_SIZE, PKT_FILEDAT_SIZE);
+                        boolean fileCompleted = false;
+                        boolean[] arrContig = new boolean[numChunks];
+                        while (!fileCompleted) {
+                            //get the next part of the file
+                            Message msg = arrReceived.get(idxFile).take();
 
-                                Message msgPart = new Message(initMsg);
-                                msgPart.mData = wrapFileData(fileData, fileIndex, loc, size);
-                                writeMessage("Sending File " + fileIndex + " - Part " + loc);
-                                qMessages.put(msgPart);
+                            //set that sequence has been received and add to data
+                            if (!arrContig[msg.mSqun]) {
+                                arrContig[msg.mSqun] = true;
+                                int dataLen = 0;
+                                if (msg.mSqun == numChunks - 1) {
+                                    //get size of data
+                                    //dataLen =
+                                }
 
-                                if (size < PKT_FILEDAT_SIZE) j = PKT_FILEDAT_SIZE;
+                                System.arraycopy(msg.mData, 0, fileData, msg.mSqun * PKT_FILEDAT_SIZE, dataLen);
                             }
+
+                            //if sequence is larger than what's currently known
+                            if (msg.mSqun >= squnPos) {
+                                int windowMaxPos = Math.min(msg.mSqun / WINDOW_SIZE * WINDOW_SIZE + WINDOW_SIZE, numChunks);
+                                boolean isContig = true;
+                                for (int i = squnPos; i < windowMaxPos; i++) {
+                                    if (!arrContig[i]) {
+                                        isContig = false;
+                                    }
+                                }
+                                if (isContig) {
+                                    squnPos = msg.mSqun + 1;
+                                    if (squnPos >= numChunks) {
+                                        fileCompleted = true;
+                                    }
+                                }
+                            }
+
+                            ackFileData(msg.mFileNum, squnPos);
                         }
 
-                        Files.write(file, msg.mData);
+                        Files.write(file, fileData);
                     }
                 }
                 catch (Exception ex) {
@@ -75,10 +100,37 @@ public class FileServer extends NetObject {
         });
     }
 
+    private byte[] ackFileInfo(int fileNum) {
+        ByteBuffer bbIndex = ByteBuffer.allocate(PKT_FILENUM_SIZE);
+        bbIndex.putInt(fileNum);
+
+        byte[] wrappedData = new byte[PKT_TYPE_SIZE + PKT_FILENUM_SIZE];
+        wrappedData[0] = MSG_INIT;
+        System.arraycopy(bbIndex.array(), 0, wrappedData, PKT_TYPE_SIZE, PKT_FILENUM_SIZE);
+
+        return wrappedData;
+    }
+
+    private byte[] ackFileData(int fileNum, int sequenceNum) {
+        byte[] wrappedData = new byte[PKT_FILENUM_SIZE + PKT_SQUN_SIZE + PKT_FILEDAT_SIZE];
+
+        ByteBuffer bbFile = ByteBuffer.allocate(PKT_FILENUM_SIZE);
+        bbFile.putInt(fileNum);
+
+        ByteBuffer bbSqun = ByteBuffer.allocate(PKT_SQUN_SIZE);
+        bbSqun.putInt(sequenceNum);
+
+        wrappedData[0] = MSG_DATA;
+        System.arraycopy(bbFile.array(), 0, wrappedData, PKT_TYPE_SIZE, PKT_FILENUM_SIZE);
+        System.arraycopy(bbSqun.array(), 0, wrappedData, PKT_TYPE_SIZE + PKT_FILENUM_SIZE, PKT_SQUN_SIZE);
+
+        return wrappedData;
+    }
+
     private Path createFile(byte[] data) {
         ByteBuffer bbLen = getBytes(data, PKT_FILENAME_LEN, PKT_FILEDATA_LEN, PKT_FILEDATA_LEN + PKT_FILENAME_LEN);
-        ByteBuffer bbName = getBytes(data, bbLen.getInt(),
-                PKT_FILEDATA_LEN + PKT_FILENAME_LEN, PKT_FILEDATA_LEN + PKT_FILENAME_LEN + bbLen.getInt());
+        ByteBuffer bbName = getBytes(data, bbLen.getInt(0),
+                PKT_FILEDATA_LEN + PKT_FILENAME_LEN, PKT_FILEDATA_LEN + PKT_FILENAME_LEN + bbLen.getInt(0));
         String filename = new String(bbName.array());
         //String baseFilename = filename;
 
@@ -86,8 +138,16 @@ public class FileServer extends NetObject {
         boolean isGood = false;
         while (!isGood) {
             try {
+                //create the downloads directory
+                try {
+                    Files.createDirectory(Paths.get(filePath + downloadFolder));
+                }
+                catch (Exception ex) {
+                    //ex.printStackTrace();
+                }
+
                 //create the empty file
-                file = Paths.get(filePath + filename);
+                file = Paths.get(filePath + downloadFolder + filename);
                 Files.createFile(file);
                 isGood = true;
             } catch (FileAlreadyExistsException x) {
@@ -104,7 +164,7 @@ public class FileServer extends NetObject {
 
     private int getFilesize(byte[] data) {
         ByteBuffer bbLen = getBytes(data, PKT_FILEDATA_LEN, 0, PKT_FILEDATA_LEN);
-        return bbLen.getInt();
+        return bbLen.getInt(0);
     }
 
     public void routeMessage(Message msg) {

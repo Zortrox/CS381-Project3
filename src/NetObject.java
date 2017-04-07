@@ -88,15 +88,15 @@ public class NetObject {
 	}
 
 	//receiving data
-	public boolean listen(final int port) {
+	public boolean listen(DatagramSocket listenSocket) {
 		try {
-			DatagramSocket listenSocket = new DatagramSocket(port);
+			//listenSocket = new DatagramSocket(port);
 
 			Thread thrListen = new Thread(new Runnable() {
 				@Override
 				public void run() {
 					try {
-						System.out.println("<server>: Listening for packets.");
+						writeMessage("Listening for packets.");
 
 						while (true) {
 							byte[] receiveData = new byte[PACKET_SIZE];
@@ -143,15 +143,17 @@ public class NetObject {
 	public void routeMessage(Message msg) {}
 
 	//sending data
-	public boolean connect() {
+	public boolean connect(final int port) {
 		try {
-			DatagramSocket sendSocket = new DatagramSocket();
+			DatagramSocket sendSocket = new DatagramSocket(port);
 			Thread thrConnect = new Thread(new Runnable() {
 				@Override
 				public void run() {
 					try {
-						Message msg = qMessages.take();
-						sendUDPData(sendSocket, msg);
+						while (true) {
+							Message msg = qMessages.take();
+							sendUDPData(sendSocket, msg);
+						}
 					} catch (Exception ex) {
 						ex.printStackTrace();
 					}
@@ -159,7 +161,7 @@ public class NetObject {
 			});
 			thrConnect.start();
 
-			listen(sendSocket.getPort());
+            listen(sendSocket);
 		} catch (Exception e) {
 			e.printStackTrace();
 			return false;
@@ -175,12 +177,12 @@ public class NetObject {
 		//get packet type
 		int idxFrom = 0;
 		int idxTo = PKT_TYPE_SIZE;
-		msg.mType = getBytes(msg.mData, PKT_TYPE_SIZE, idxFrom, idxTo).get();
+		msg.mType = getBytes(msg.mData, PKT_TYPE_SIZE, idxFrom, idxTo).get(0);
 		idxFrom += PKT_TYPE_SIZE;
 
 		//get file number
 		idxTo += PKT_FILENUM_SIZE;
-		msg.mFileNum = getBytes(msg.mData, PKT_FILENUM_SIZE, idxFrom, idxTo).getInt();
+		msg.mFileNum = getBytes(msg.mData, PKT_FILENUM_SIZE, idxFrom, idxTo).getInt(0);
 		idxFrom += PKT_FILENUM_SIZE;
 
 		if (msg.mType == MSG_INIT) {
@@ -189,7 +191,7 @@ public class NetObject {
 		} else if (msg.mType == MSG_DATA) {
 			//get sequence number
 			idxTo += PKT_SQUN_SIZE;
-			msg.mSqun = getBytes(msg.mData, PKT_SQUN_SIZE, idxFrom, idxTo).getInt();
+			msg.mSqun = getBytes(msg.mData, PKT_SQUN_SIZE, idxFrom, idxTo).getInt(0);
 			idxFrom += PKT_SQUN_SIZE;
 
 			//get file data
