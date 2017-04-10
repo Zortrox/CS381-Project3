@@ -3,6 +3,9 @@
  */
 
 import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -26,12 +29,22 @@ public class FileClient extends NetObject {
         FileClient client = new FileClient("File Client");
 
         client.connect(4500);
-
-        client.sendFile("127.0.0.1", 5000);
     }
 
     private FileClient(String title) {
         super(title);
+
+        JButton btnSend = new JButton("Send File");
+        btnSend.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendFile("127.0.0.1", 5000);
+            }
+        });
+
+        frame.add(btnSend, BorderLayout.SOUTH);
+        frame.revalidate();
+        frame.repaint();
     }
 
     private void sendFile(String IP, int port) {
@@ -89,12 +102,22 @@ public class FileClient extends NetObject {
                                 if (size < PKT_FILEDAT_SIZE) j = PKT_FILEDAT_SIZE;
                             }
 
+                            //wait to receive ack & set the data to send again
                             int[] vars = waitForAck(fileIndex, windowPos, indexPos);
                             windowPos = vars[IDX_WINDOW_POS];
                             indexPos = vars[IDX_SEQUENCE_POS];
+
+                            //check that the number of chunks was reached
+                            int currentChunk = windowPos * WINDOW_SIZE + indexPos;
+                            if (currentChunk >= numChunks) {
+                                break;
+                            }
                         }
 
                         writeMessage("File " + fileIndex + " completed: " + fileName);
+
+
+
                     }
                     catch (Exception ex) {
                         ex.printStackTrace();
@@ -191,7 +214,7 @@ public class FileClient extends NetObject {
     }
 
     private byte[] wrapFileData(byte[] data, int fileNum, int sequenceNum, int dataLength) {
-        byte[] wrappedData = new byte[PKT_FILENUM_SIZE + PKT_SQUN_SIZE + PKT_FILEDAT_SIZE];
+        byte[] wrappedData = new byte[PKT_TYPE_SIZE + PKT_FILENUM_SIZE + PKT_SQUN_SIZE + PKT_FILEDAT_SIZE];
 
         ByteBuffer bbFile = ByteBuffer.allocate(PKT_FILENUM_SIZE);
         bbFile.putInt(fileNum);

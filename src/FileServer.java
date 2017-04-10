@@ -61,10 +61,9 @@ public class FileServer extends NetObject {
                             //set that sequence has been received and add to data
                             if (!arrContig[msg.mSqun]) {
                                 arrContig[msg.mSqun] = true;
-                                int dataLen = 0;
+                                int dataLen = PKT_FILEDAT_SIZE;
                                 if (msg.mSqun == numChunks - 1) {
-                                    //get size of data
-                                    //dataLen =
+                                    dataLen = fileSize % PKT_FILEDAT_SIZE;
                                 }
 
                                 System.arraycopy(msg.mData, 0, fileData, msg.mSqun * PKT_FILEDAT_SIZE, dataLen);
@@ -87,10 +86,20 @@ public class FileServer extends NetObject {
                                 }
                             }
 
-                            ackFileData(msg.mFileNum, squnPos);
+                            //ack the data sequence
+                            Message msgDataAck = new Message(initMsg);
+                            msgDataAck.mData = ackFileData(msg.mFileNum, squnPos);
+                            qMessages.put(msgDataAck);
                         }
 
+                        //write data to file
                         Files.write(file, fileData);
+                        writeMessage("File " + file.getFileName() + " completed");
+
+                        //remove the file from the hash so new files with same filenum can be added
+                        mtxHash.acquire();
+                        hashPacket.remove(createKey(initMsg.mPort, initMsg.mFileNum));
+                        mtxHash.release();
                     }
                 }
                 catch (Exception ex) {
@@ -132,7 +141,8 @@ public class FileServer extends NetObject {
         ByteBuffer bbName = getBytes(data, bbLen.getInt(0),
                 PKT_FILEDATA_LEN + PKT_FILENAME_LEN, PKT_FILEDATA_LEN + PKT_FILENAME_LEN + bbLen.getInt(0));
         String filename = new String(bbName.array());
-        //String baseFilename = filename;
+        String baseFilename = filename;
+        int nextFile = 2;
 
         Path file = null;
         boolean isGood = false;
@@ -150,16 +160,36 @@ public class FileServer extends NetObject {
                 file = Paths.get(filePath + downloadFolder + filename);
                 Files.createFile(file);
                 isGood = true;
-            } catch (FileAlreadyExistsException x) {
+            } catch (FileAlreadyExistsException ex) {
                 //create file with sequential number at end
-                //filename = baseFilename + next;
-            } catch (IOException x) {
+                filename = nextFilename(baseFilename, nextFile);
+                nextFile++;
+            } catch (IOException ex) {
                 //some other error occurred
                 return null;
+            } catch (Exception ex) {
+                ex.printStackTrace();
             }
         }
 
         return file;
+    }
+
+    private String nextFilename(String filename, int next) {
+        int endIndex = filename.lastIndexOf('.');
+        int extEndIndex = endIndex;
+        if (endIndex == -1) {
+            endIndex = filename.length() - 1;
+        }
+
+        String strReturn = filename.substring(0, endIndex);
+        strReturn += "(" + next + ")";
+
+        if (extEndIndex != -1) {
+            strReturn += filename.substring(extEndIndex, filename.length());
+        }
+
+        return strReturn;
     }
 
     private int getFilesize(byte[] data) {
@@ -167,9 +197,13 @@ public class FileServer extends NetObject {
         return bbLen.getInt(0);
     }
 
+    public String createKey(int port, int fileNum) {
+        return port + "-" + fileNum;
+    }
+
     public void routeMessage(Message msg) {
         try {
-            String strKey = msg.mPort + "-" + msg.mFileNum;
+            String strKey = createKey(msg.mPort, msg.mFileNum);
             mtxHash.acquire();
             Integer idxFile = hashPacket.get(strKey);
             mtxArray.acquire();

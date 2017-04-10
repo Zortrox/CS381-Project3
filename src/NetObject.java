@@ -120,7 +120,7 @@ public class NetObject {
 						while (true) {
 							//receive data
 							DatagramPacket receivePacket = qPackets.take();
-							writeMessage("New Packet");
+							//writeMessage("New Packet");
 							Message msg = new Message();
 
 							processUDPData(receivePacket, msg);
@@ -187,7 +187,7 @@ public class NetObject {
 
 		if (msg.mType == MSG_INIT) {
 			//get file size, filename length, and filename
-			msg.mData = Arrays.copyOfRange(msg.mData, idxFrom, msg.mData.length - 1);
+			msg.mData = Arrays.copyOfRange(msg.mData, idxFrom, msg.mData.length);
 		} else if (msg.mType == MSG_DATA) {
 			//get sequence number
 			idxTo += PKT_SQUN_SIZE;
@@ -195,7 +195,7 @@ public class NetObject {
 			idxFrom += PKT_SQUN_SIZE;
 
 			//get file data
-			msg.mData = Arrays.copyOfRange(msg.mData, idxFrom, msg.mData.length - 1);
+			msg.mData = Arrays.copyOfRange(msg.mData, idxFrom, msg.mData.length);
 		}
 
 		//get location from packet
