@@ -85,13 +85,34 @@ public class NetObject {
 		frame.add(scrollPane);
 
 		frame.setVisible(true);
+
+		processPackets();
+	}
+
+	//show input dialog to get new IP and port
+	public String showServerPopup(String title, String text) {
+		String host = "";
+		boolean goodHost = false;
+		while (!goodHost) {
+			host = JOptionPane.showInputDialog(title, text);
+
+			if (host != null && !host.equals("")) {
+				try {
+					int port = Integer.parseInt(host.substring(host.indexOf(':') + 1));
+					String strIP = host.substring(0, host.indexOf(':'));
+					goodHost = true;
+				} catch (Exception ex) {
+					ex.printStackTrace();
+				}
+			}
+		}
+
+		return host;
 	}
 
 	//receiving data
-	public boolean listen(DatagramSocket listenSocket) {
+	private void listen(final DatagramSocket listenSocket, final boolean separatePackets) {
 		try {
-			//listenSocket = new DatagramSocket(port);
-
 			Thread thrListen = new Thread(new Runnable() {
 				@Override
 				public void run() {
@@ -103,7 +124,13 @@ public class NetObject {
 							DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
 							listenSocket.receive(receivePacket);
 
-							qPackets.put(receivePacket);
+							if (separatePackets) {
+								receivePacket.setPort(listenSocket.getLocalPort());
+								receivePacket.setAddress(null);
+								qPackets.put(receivePacket);
+							} else {
+								qPackets.put(receivePacket);
+							}
 						}
 					} catch (Exception ex) {
 						ex.printStackTrace();
@@ -111,47 +138,46 @@ public class NetObject {
 				}
 			});
 			thrListen.start();
-
-			//process packets
-			Thread thrProcess = new Thread(new Runnable() {
-				@Override
-				public void run() {
-					try {
-						while (true) {
-							//receive data
-							DatagramPacket receivePacket = qPackets.take();
-							//writeMessage("New Packet");
-							Message msg = new Message();
-
-							processUDPData(receivePacket, msg);
-							routeMessage(msg);
-						}
-					} catch (Exception ex) {
-						ex.printStackTrace();
-					}
-				}
-			});
-			thrProcess.start();
 		} catch (Exception ex) {
 			ex.printStackTrace();
-			return false;
 		}
+	}
 
-		return true;
+	private void processPackets() {
+		//process packets
+		Thread thrProcess = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					while (true) {
+						//receive data
+						DatagramPacket receivePacket = qPackets.take();
+						//writeMessage("New Packet");
+						Message msg = new Message();
+
+						processUDPData(receivePacket, msg);
+						routeMessage(msg);
+					}
+				} catch (Exception ex) {
+					ex.printStackTrace();
+				}
+			}
+		});
+		thrProcess.start();
 	}
 
 	public void routeMessage(Message msg) {}
 
 	//sending data
-	public boolean connect(final int port) {
+	private void sendDataLoop(final int port, final BlockingQueue<Message> queue, boolean separatePackets) {
 		try {
-			DatagramSocket sendSocket = new DatagramSocket(port);
+			final DatagramSocket sendSocket = new DatagramSocket(port);
 			Thread thrConnect = new Thread(new Runnable() {
 				@Override
 				public void run() {
 					try {
 						while (true) {
-							Message msg = qMessages.take();
+							Message msg = queue.take();
 							sendUDPData(sendSocket, msg);
 						}
 					} catch (Exception ex) {
@@ -161,16 +187,21 @@ public class NetObject {
 			});
 			thrConnect.start();
 
-            listen(sendSocket);
+			listen(sendSocket, separatePackets);
 		} catch (Exception e) {
 			e.printStackTrace();
-			return false;
 		}
-
-		return true;
 	}
 
-	private void processUDPData(DatagramPacket packet, Message msg) {
+	public void connect(int port) {
+		sendDataLoop(port, qMessages, false);
+	}
+
+	public void connect(int port, BlockingQueue<Message> queue) {
+		sendDataLoop(port, queue, true);
+	}
+
+	public void processUDPData(DatagramPacket packet, Message msg) {
 		//store packet data
 		msg.mData = packet.getData();
 

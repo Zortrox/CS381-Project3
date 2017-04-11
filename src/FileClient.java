@@ -28,17 +28,22 @@ public class FileClient extends NetObject {
     public static void main(String[] args) {
         FileClient client = new FileClient("File Client");
 
-        client.connect(4500);
+		int port = Integer.parseInt(JOptionPane.showInputDialog("Port to Listen On", "4500"));
+        client.connect(port);
     }
 
     private FileClient(String title) {
         super(title);
 
+		String host = showServerPopup("IP:Port to Send Files", "127.0.0.1:6000");
+		final int port = Integer.parseInt(host.substring(host.indexOf(':') + 1));
+		final String strIP = host.substring(0, host.indexOf(':'));
+
         JButton btnSend = new JButton("Send File");
         btnSend.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                sendFile("127.0.0.1", 5000);
+                sendFile(strIP, port);
             }
         });
 
@@ -47,7 +52,7 @@ public class FileClient extends NetObject {
         frame.repaint();
     }
 
-    private void sendFile(String IP, int port) {
+    private void sendFile(final String IP, final int port) {
         JFileChooser fileChooser = new JFileChooser();
         int opt = fileChooser.showOpenDialog(frame);
 
@@ -60,7 +65,7 @@ public class FileClient extends NetObject {
                     try {
                         mtxArray.acquire();
                         int fileIndex = arrReceived.size();
-                        arrReceived.add(new LinkedBlockingQueue<>());
+                        arrReceived.add(new LinkedBlockingQueue<Message>());
                         mtxArray.release();
 
                         //file info
@@ -105,7 +110,7 @@ public class FileClient extends NetObject {
                             //wait to receive ack & set the data to send again
                             int[] vars = waitForAck(fileIndex, windowPos, indexPos);
                             windowPos = vars[IDX_WINDOW_POS];
-                            indexPos = vars[IDX_SEQUENCE_POS];
+                            indexPos = vars[IDX_SEQUENCE_POS] % WINDOW_SIZE;
 
                             //check that the number of chunks was reached
                             int currentChunk = windowPos * WINDOW_SIZE + indexPos;
@@ -115,8 +120,6 @@ public class FileClient extends NetObject {
                         }
 
                         writeMessage("File " + fileIndex + " completed: " + fileName);
-
-
 
                     }
                     catch (Exception ex) {
@@ -159,7 +162,6 @@ public class FileClient extends NetObject {
                         if (maxSequence >= windowPos * WINDOW_SIZE + WINDOW_SIZE) {
                             windowPos++;
                             indexPos = 0;
-                            arrReceived.get(fileIndex).clear();
                             waitToResend = false;
                         } else {
                             indexPos = maxSequence;

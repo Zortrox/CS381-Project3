@@ -23,14 +23,15 @@ public class FileServer extends NetObject {
     public static void main(String[] args) {
         FileServer server = new FileServer("File Server");
 
-        server.connect(5000);
+        int port = Integer.parseInt(JOptionPane.showInputDialog("Port to Listen On", "5000"));
+        server.connect(port);
     }
 
     private FileServer(String title) {
         super(title);
     }
 
-    private Thread receiveFile(int idxFile) {
+    private Thread receiveFile(final int idxFile) {
         return new Thread(new Runnable() {
             @Override
             public void run() {
@@ -76,6 +77,8 @@ public class FileServer extends NetObject {
                                 for (int i = squnPos; i < windowMaxPos; i++) {
                                     if (!arrContig[i]) {
                                         isContig = false;
+                                        squnPos = i;
+                                        break;
                                     }
                                 }
                                 if (isContig) {
@@ -212,7 +215,7 @@ public class FileServer extends NetObject {
             } else {
                 idxFile = arrReceived.size();
                 hashPacket.put(strKey, idxFile);
-                arrReceived.add(new LinkedBlockingQueue<>());
+                arrReceived.add(new LinkedBlockingQueue<Message>());
                 arrReceived.get(idxFile).put(msg);
 
                 //start the receiving file thread
